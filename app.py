@@ -13,13 +13,15 @@ import streamlit as st
 from google.oauth2.service_account import Credentials
 
 # ─────────────────────────────────────────────
-# НАСТРОЙКИ — променяй само тук
+# НАСТРОЙКИ В КОДА — само редките (цена, кутии)
+# Наличността и етикетът на беритбата се управляват
+# от листа „Настройки" в Google Sheet — виж най-долу.
 # ─────────────────────────────────────────────
-STOCK_KG = 50               # налични килограми за текущата беритба
+DEFAULT_STOCK_KG = 50       # резервна стойност, ако листът липсва
 PRICE_PER_KG = 3            # евро на килограм
 BOX_OPTIONS = [3, 5]        # размери на кутиите в кг
 PICKUP_INFO = "Лично предаване в Пловдив. Ще се свържа с теб по телефона за ден и място."
-HARVEST_LABEL = "Беритба юни 2026"   # смени при всяка нова беритба
+DEFAULT_HARVEST_LABEL = "Беритба юни 2026"
 
 # Квартали на Пловдив + околни села за падащото меню
 LOCATIONS = [
@@ -98,16 +100,43 @@ SCOPES = [
 
 
 @st.cache_resource
-def get_worksheet():
+def get_sheets():
     creds = Credentials.from_service_account_info(
         st.secrets["gcp_service_account"], scopes=SCOPES
     )
     client = gspread.authorize(creds)
-    sheet = client.open_by_key(st.secrets["sheet_id"]).sheet1
-    # Ако таблицата е празна — слагаме заглавния ред
-    if not sheet.get_all_values():
-        sheet.append_row(SHEET_HEADERS)
-    return sheet
+    book = client.open_by_key(st.secrets["sheet_id"])
+
+    orders_ws = book.sheet1
+    if not orders_ws.get_all_values():
+        orders_ws.append_row(SHEET_HEADERS)
+
+    # Лист „Настройки" — наличност и етикет, редактирани от телефона
+    try:
+        settings_ws = book.worksheet("Настройки")
+    except gspread.exceptions.WorksheetNotFound:
+        settings_ws = book.add_worksheet(title="Настройки", rows=10, cols=2)
+        settings_ws.update(
+            "A1:B3",
+            [
+                ["Настройка", "Стойност"],
+                ["Наличност (кг)", str(DEFAULT_STOCK_KG)],
+                ["Беритба", DEFAULT_HARVEST_LABEL],
+            ],
+        )
+    return orders_ws, settings_ws
+
+
+def load_settings(settings_ws):
+    """Чете наличност (B2) и етикет на беритбата (B3) от листа Настройки."""
+    try:
+        raw_stock = settings_ws.acell("B2").value
+        raw_label = settings_ws.acell("B3").value
+        stock = int(str(raw_stock).strip())
+        label = str(raw_label).strip() or DEFAULT_HARVEST_LABEL
+        return stock, label
+    except (ValueError, TypeError, AttributeError):
+        return DEFAULT_STOCK_KG, DEFAULT_HARVEST_LABEL
 
 
 def load_orders(sheet):
@@ -119,16 +148,29 @@ def load_orders(sheet):
     return [dict(zip(headers, r)) for r in rows[1:]]
 
 
-def confirmed_kg(orders):
+def confirmed_kg(orders, harvest_label):
     """Сума на килограмите с потвърдени поръчки за текущата беритба."""
     total = 0
     for o in orders:
-        if o.get("Статус") == "Потвърдена" and o.get("Беритба") == HARVEST_LABEL:
+        if o.get("Статус") == "Потвърдена" and o.get("Беритба") == harvest_label:
             try:
                 total += int(o.get("Кутия (кг)", 0))
             except ValueError:
                 pass
     return total
+
+
+def waitlist_stats(orders, harvest_label):
+    """Брой хора и килограми в чакащия списък за текущата беритба."""
+    people, kg = 0, 0
+    for o in orders:
+        if o.get("Статус") == "Чакащ списък" and o.get("Беритба") == harvest_label:
+            people += 1
+            try:
+                kg += int(o.get("Кутия (кг)", 0))
+            except ValueError:
+                pass
+    return people, kg
 
 
 def valid_phone(phone: str) -> bool:
@@ -160,15 +202,11 @@ st.markdown(
     }
     .stock-banner {
         background: #f3ede3;
-        color: #2e2a24;
         border-left: 4px solid #c1442e;
         padding: 0.8rem 1rem;
         border-radius: 6px;
         margin-bottom: 1rem;
         font-size: 1.05rem;
-    }
-    .stock-banner b {
-        color: #c1442e;
     }
     .sold-out {
         background: #f3ede3;
@@ -190,7 +228,8 @@ st.markdown(
 # СЪСТОЯНИЕ НА НАЛИЧНОСТТА
 # ─────────────────────────────────────────────
 try:
-    ws = get_worksheet()
+    ws, settings_ws = get_sheets()
+    STOCK_KG, HARVEST_LABEL = load_settings(settings_ws)
     orders = load_orders(ws)
 except Exception:
     st.error(
@@ -198,19 +237,28 @@ except Exception:
     )
     st.stop()
 
-taken = confirmed_kg(orders)
+taken = confirmed_kg(orders, HARVEST_LABEL)
 remaining = max(STOCK_KG - taken, 0)
 sold_out = remaining < min(BOX_OPTIONS)
 
 if sold_out:
+    wl_people, wl_kg = waitlist_stats(orders, HARVEST_LABEL)
+    if wl_people > 0:
+        wl_text = (
+            f" В чакащия списък вече има <b>{wl_people} "
+            f"{'човек' if wl_people == 1 else 'души'} ({wl_kg} кг)</b>."
+        )
+    else:
+        wl_text = ""
     st.markdown(
-        '<div class="stock-banner sold-out">Текущата беритба е <b>изчерпана</b>. '
-        "Можеш да се запишеш в чакащия списък — за следващата беритба редът е по списъка.</div>",
+        f'<div class="stock-banner sold-out">Текущата беритба е <b>изчерпана</b>.{wl_text} '
+        "Запиши се — бера 2–3 пъти седмично и пиша на хората по реда на списъка.</div>",
         unsafe_allow_html=True,
     )
 else:
     st.markdown(
-        f'<div class="stock-banner">Останали от тази беритба: <b>{remaining} кг</b></div>',
+        f'<div class="stock-banner">Останали от тази беритба: <b>{remaining} кг</b><br>'
+        '<span style="font-size: 0.88rem;">Бера 2–3 пъти седмично през целия сезон.</span></div>',
         unsafe_allow_html=True,
     )
 
@@ -292,7 +340,7 @@ if submitted:
 
         # Препрочитаме наличността точно преди запис (срещу едновременни поръчки)
         orders = load_orders(ws)
-        taken = confirmed_kg(orders)
+        taken = confirmed_kg(orders, HARVEST_LABEL)
         remaining = max(STOCK_KG - taken, 0)
 
         status = "Потвърдена" if box <= remaining else "Чакащ списък"
