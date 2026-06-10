@@ -215,11 +215,15 @@ st.markdown(
     }
     .stock-banner {
         background: #f3ede3;
+        color: #2e2a24;
         border-left: 4px solid #c1442e;
         padding: 0.8rem 1rem;
         border-radius: 6px;
         margin-bottom: 1rem;
         font-size: 1.05rem;
+    }
+    .stock-banner b {
+        color: #c1442e;
     }
     }
     .sold-out {
