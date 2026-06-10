@@ -221,6 +221,7 @@ st.markdown(
         margin-bottom: 1rem;
         font-size: 1.05rem;
     }
+    }
     .sold-out {
         background: #f3ede3;
         border-left: 4px solid #7a6f5d;
