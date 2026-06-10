@@ -139,38 +139,46 @@ def load_settings(settings_ws):
         return DEFAULT_STOCK_KG, DEFAULT_HARVEST_LABEL
 
 
+def _norm(value) -> str:
+    """Чисти интервали и невидими знаци за сигурно сравняване."""
+    return str(value or "").strip()
+
+
 def load_orders(sheet):
     """Връща всички поръчки като списък от речници."""
     rows = sheet.get_all_values()
     if len(rows) <= 1:
         return []
-    headers = rows[0]
+    headers = [_norm(h) for h in rows[0]]
     return [dict(zip(headers, r)) for r in rows[1:]]
+
+
+def _row_kg(order) -> int:
+    try:
+        return int(float(_norm(order.get("Кутия (кг)")) or 0))
+    except ValueError:
+        return 0
 
 
 def confirmed_kg(orders, harvest_label):
     """Сума на килограмите с потвърдени поръчки за текущата беритба."""
-    total = 0
-    for o in orders:
-        if o.get("Статус") == "Потвърдена" and o.get("Беритба") == harvest_label:
-            try:
-                total += int(o.get("Кутия (кг)", 0))
-            except ValueError:
-                pass
-    return total
+    hl = _norm(harvest_label)
+    return sum(
+        _row_kg(o)
+        for o in orders
+        if _norm(o.get("Статус")) == "Потвърдена" and _norm(o.get("Беритба")) == hl
+    )
 
 
 def waitlist_stats(orders, harvest_label):
     """Брой хора и килограми в чакащия списък за текущата беритба."""
-    people, kg = 0, 0
-    for o in orders:
-        if o.get("Статус") == "Чакащ списък" and o.get("Беритба") == harvest_label:
-            people += 1
-            try:
-                kg += int(o.get("Кутия (кг)", 0))
-            except ValueError:
-                pass
-    return people, kg
+    hl = _norm(harvest_label)
+    matching = [
+        o
+        for o in orders
+        if _norm(o.get("Статус")) == "Чакащ списък" and _norm(o.get("Беритба")) == hl
+    ]
+    return len(matching), sum(_row_kg(o) for o in matching)
 
 
 def valid_phone(phone: str) -> bool:
@@ -245,6 +253,19 @@ except Exception:
 taken = confirmed_kg(orders, HARVEST_LABEL)
 remaining = max(STOCK_KG - taken, 0)
 sold_out = remaining < min(BOX_OPTIONS)
+
+# Скрита диагностика: отвори приложението с ?admin=1 накрая на адреса
+if st.query_params.get("admin") == "1":
+    with st.expander("🔧 Диагностика (вижда се само с ?admin=1)", expanded=True):
+        st.write(f"Наличност от Настройки (B2): **{STOCK_KG} кг**")
+        st.write(f"Етикет от Настройки (B3): **«{HARVEST_LABEL}»**")
+        st.write(f"Общо редове с поръчки: **{len(orders)}**")
+        st.write(f"Потвърдени кг за този етикет: **{taken}**")
+        st.write(f"Оставащи: **{remaining} кг**")
+        labels_seen = sorted({_norm(o.get("Беритба")) for o in orders})
+        statuses_seen = sorted({_norm(o.get("Статус")) for o in orders})
+        st.write(f"Етикети в колоната «Беритба»: {labels_seen}")
+        st.write(f"Стойности в колоната «Статус»: {statuses_seen}")
 
 if sold_out:
     wl_people, wl_kg = waitlist_stats(orders, HARVEST_LABEL)
