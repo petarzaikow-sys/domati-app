@@ -108,8 +108,13 @@ def get_sheets():
     book = client.open_by_key(st.secrets["sheet_id"])
 
     orders_ws = book.sheet1
-    if not orders_ws.get_all_values():
-        orders_ws.append_row(SHEET_HEADERS)
+    first_row = orders_ws.row_values(1)
+    if [_norm(h) for h in first_row[: len(SHEET_HEADERS)]] != SHEET_HEADERS:
+        # Заглавният ред липсва или е пипнат — възстановяваме го на ред 1
+        if any(_norm(c) for c in first_row):
+            orders_ws.insert_row(SHEET_HEADERS, 1)
+        else:
+            orders_ws.update("A1", [SHEET_HEADERS])
 
     # Лист „Настройки" — наличност и етикет, редактирани от телефона
     try:
@@ -369,8 +374,12 @@ if submitted:
         now = datetime.now(ZoneInfo("Europe/Sofia")).strftime("%d.%m.%Y %H:%M")
         price = box * PRICE_PER_KG
 
-        ws.append_row(
-            [
+        # Записваме на точно определен ред (заглавен ред + брой поръчки + 1),
+        # винаги от колона A — append_row понякога "пръска" редовете.
+        target_row = len(orders) + 2
+        ws.update(
+            f"A{target_row}",
+            [[
                 number,
                 status,
                 now,
@@ -381,7 +390,7 @@ if submitted:
                 final_area,
                 note.strip(),
                 HARVEST_LABEL,
-            ]
+            ]],
         )
 
         st.session_state["done"] = {
