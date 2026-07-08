@@ -19,7 +19,7 @@ from google.oauth2.service_account import Credentials
 # ─────────────────────────────────────────────
 DEFAULT_STOCK_KG = 50       # резервна стойност, ако листът липсва
 PRICE_PER_KG = 3            # евро на килограм
-BOX_OPTIONS = [3, 5]        # размери на кутиите в кг
+BOX_OPTIONS = [3, 5, 10]        # размери на кутиите в кг
 PICKUP_INFO = "Лично предаване в Пловдив. Ще се свържа с теб по телефона за ден и място."
 DEFAULT_HARVEST_LABEL = "Беритба юни 2026"
 
